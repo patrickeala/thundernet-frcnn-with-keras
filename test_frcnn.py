@@ -68,6 +68,9 @@ elif options.network == 'mobilenetv1_25':
 elif options.network == 'mobilenetv2':
 	from keras_frcnn import mobilenetv2 as nn
 	C.network = 'mobilenetv2'
+elif options.network == 'thundernetv1':
+	from keras_frcnn import thundernetv1 as nn
+	C.network = 'thundernetv1'
 else:
 	print('Not a valid model')
 	raise ValueError
@@ -157,7 +160,6 @@ feature_map_input = Input(shape=input_shape_features)
 
 # define the base network (resnet here, can be VGG, Inception, etc)
 shared_layers = nn.nn_base(img_input)
-
 # define the RPN, built on the base layers
 num_anchors = len(C.anchor_box_scales) * len(C.anchor_box_ratios)
 rpn_layers = nn.rpn(shared_layers, num_anchors)
@@ -184,7 +186,7 @@ all_imgs = []
 
 classes = {}
 
-bbox_threshold = 0.5
+bbox_threshold = 0.7
 
 visualise = True
 
@@ -209,7 +211,7 @@ for idx, img_name in enumerate(sorted(os.listdir(img_path))):
 	
 
 	R = roi_helpers.rpn_to_roi(Y1, Y2, C, K.image_dim_ordering(), overlap_thresh=0.3)
-	print(R.shape)
+	#print(R.shape)
     
 	# convert from (x1,y1,x2,y2) to (x,y,w,h)
 	R[:, 2] -= R[:, 0]
@@ -218,6 +220,8 @@ for idx, img_name in enumerate(sorted(os.listdir(img_path))):
 	# apply the spatial pyramid pooling to the proposed regions
 	bboxes = {}
 	probs = {}
+	#print('Half inference (RPN) = {}'.format(time.time() - st))
+    
 	for jk in range(R.shape[0]//num_rois + 1):
 		ROIs = np.expand_dims(R[num_rois*jk:num_rois*(jk+1),:],axis=0)
 		if ROIs.shape[1] == 0:
@@ -231,13 +235,17 @@ for idx, img_name in enumerate(sorted(os.listdir(img_path))):
 			ROIs_padded[:,:curr_shape[1],:] = ROIs
 			ROIs_padded[0,curr_shape[1]:,:] = ROIs[0,0,:]
 			ROIs = ROIs_padded
-
+			
+		#print(jk)
+		#print(F)
+		#print(ROIs)
 		[P_cls,P_regr] = model_classifier.predict([F, ROIs])
-		print(P_cls)
+		#print(P_cls)
 
 		for ii in range(P_cls.shape[1]):
-
-			if np.max(P_cls[0,ii,:]) < 0.8 or np.argmax(P_cls[0,ii,:]) == (P_cls.shape[2] - 1):
+			
+			#IF confidence < bbox_thresh, or it is background, remove
+			if np.max(P_cls[0,ii,:]) < bbox_threshold or np.argmax(P_cls[0,ii,:]) == (P_cls.shape[2] - 1):
 				continue
 
 			cls_name = class_mapping[np.argmax(P_cls[0,ii,:])]
@@ -253,8 +261,8 @@ for idx, img_name in enumerate(sorted(os.listdir(img_path))):
 	all_dets = []
 
 	for key in bboxes:
-		print(key)
-		print(len(bboxes[key]))
+		#print(key)
+		#print(len(bboxes[key]))
 		bbox = np.array(bboxes[key])
 
 		new_boxes, new_probs = roi_helpers.non_max_suppression_fast(bbox, np.array(probs[key]), overlap_thresh = 0.3)
@@ -274,12 +282,12 @@ for idx, img_name in enumerate(sorted(os.listdir(img_path))):
 			cv2.rectangle(img, (textOrg[0] - 5,textOrg[1]+baseLine - 5), (textOrg[0]+retval[0] + 5, textOrg[1]-retval[1] - 5), (255, 255, 255), -1)
 			cv2.putText(img, textLabel, textOrg, cv2.FONT_HERSHEY_DUPLEX, 1, (0, 0, 0), 1)
 
-	print('Elapsed time = {}'.format(time.time() - st))
+	print('Full inference = {}'.format(time.time() - st))
 	print(all_dets)
 	print(bboxes)
     # enable if you want to show pics
 	if options.write:
            import os
-           if not os.path.isdir("results"):
-              os.mkdir("results")
-           cv2.imwrite('./results/{}.png'.format(idx),img)
+           if not os.path.isdir("output"):
+              os.mkdir("output")
+           cv2.imwrite('./output/{}.png'.format(idx),img)
