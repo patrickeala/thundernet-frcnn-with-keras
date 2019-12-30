@@ -2,6 +2,7 @@
 *.hdf5
 *.h5
 *.pickle
+*.pyc
 
 .ipynb_checkpoints
 */.ipynb_checkpoints/*
