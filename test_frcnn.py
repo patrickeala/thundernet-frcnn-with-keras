@@ -207,6 +207,7 @@ for idx, img_name in enumerate(sorted(os.listdir(img_path))):
 	if K.image_dim_ordering() == 'tf':
 		X = np.transpose(X, (0, 2, 3, 1))
 	# get the feature maps and output from the RPN
+	print(X.shape)
 	[Y1, Y2, F] = model_rpn.predict(X)
 	
 

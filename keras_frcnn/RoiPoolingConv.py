@@ -100,7 +100,9 @@ class PSRoiAlignPooling(Layer):
         final_output = K.reshape(final_output, (1, self.num_rois, self.pool_size, self.pool_size, self.alpha_channels))
 
         # permute_dimensions is similar to transpose
-        final_output = K.permute_dimensions(final_output, (0, 1, 2, 3, 4))
+        # Henri: it's exactly transpose, too bad tflite doesnt support transpose of >4D vectors
+        # We can still remove it though because permute(tensor, 0,1,2...N) is just identity
+        # final_output = K.permute_dimensions(final_output, (0, 1, 2, 3, 4))
 
         return final_output
 
@@ -207,11 +209,15 @@ class RoiPoolingConv(Layer):
 
         final_output = K.concatenate(outputs, axis=0)
         final_output = K.reshape(final_output, (1, self.num_rois, self.pool_size, self.pool_size, self.nb_channels))
-
-        if self.dim_ordering == 'th':
-            final_output = K.permute_dimensions(final_output, (0, 1, 4, 2, 3))
-        else:
-            final_output = K.permute_dimensions(final_output, (0, 1, 2, 3, 4))
+        
+        
+        # permute_dimensions is similar to transpose
+        # Henri: it's exactly transpose, too bad tflite doesnt support transpose of >4D vectors
+        # We can still remove it though because permute(tensor, 0,1,2...N) is just identity
+        #if self.dim_ordering == 'th':
+        #    final_output = K.permute_dimensions(final_output, (0, 1, 4, 2, 3))
+        #else:
+        #    final_output = K.permute_dimensions(final_output, (0, 1, 2, 3, 4))
 
         return final_output
     

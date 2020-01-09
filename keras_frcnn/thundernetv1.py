@@ -63,18 +63,25 @@ def nn_base(input_tensor=None, trainable=False):
     
     # need this layer to pass the input image size
     x = layers.ZeroPadding2D((3, 3))(img_input)
-
+    
+    #Input: 320x320
+    #Block 1, Output = 160x160
     x = _conv_block(img_input, 32, alpha, strides=(2, 2))
+    
+    #Block 2, Output 160x160 (Stride 1)
     x = _depthwise_conv_block(x, 64, alpha, depth_multiplier, block_id=1)
-
+    
+    #Block 3, Output = 80x80
     x = _depthwise_conv_block(x, 128, alpha, depth_multiplier,
                               strides=(2, 2), block_id=2)
     x = _depthwise_conv_block(x, 128, alpha, depth_multiplier, block_id=3)
-
+    
+    #Block 4, Output = 40x40
     x = _depthwise_conv_block(x, 256, alpha, depth_multiplier,
                               strides=(2, 2), block_id=4)
     x = _depthwise_conv_block(x, 256, alpha, depth_multiplier, block_id=5)
 
+    #Block 5 is a 5x stride1 dw-separable, Output = 20x20
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier,
                               strides=(2, 2), block_id=6)
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=7)
@@ -82,8 +89,6 @@ def nn_base(input_tensor=None, trainable=False):
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=9)
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=10)
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=11)
-
-
 
     return x
 
