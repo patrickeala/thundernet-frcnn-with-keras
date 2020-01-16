@@ -111,6 +111,9 @@ elif options.network == 'densenet':
 elif options.network == 'thundernetv1':
 	from keras_frcnn import thundernetv1 as nn
 	C.network = 'thundernetv1'
+elif options.network == 'thundernetv2':
+    from keras_frcnn import thundernetv2 as nn
+    C.network = 'thundernetv2'
 else:
 	print('Not a valid model')
 	raise ValueError

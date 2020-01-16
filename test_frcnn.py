@@ -71,6 +71,9 @@ elif options.network == 'mobilenetv2':
 elif options.network == 'thundernetv1':
 	from keras_frcnn import thundernetv1 as nn
 	C.network = 'thundernetv1'
+elif options.network == 'thundernetv2':
+    from keras_frcnn import thundernetv2 as nn
+    C.network = 'thundernetv2'
 else:
 	print('Not a valid model')
 	raise ValueError
@@ -87,16 +90,17 @@ def format_img_size(img, C):
 	img_min_side = float(C.im_size)
 	(height,width,_) = img.shape
 		
-	if width <= height:
-		ratio = img_min_side/width
-		new_height = int(ratio * height)
-		new_width = int(img_min_side)
-	else:
-		ratio = img_min_side/height
-		new_width = int(ratio * width)
-		new_height = int(img_min_side)
-	img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
-	return img, ratio	
+	ratio_w = img_min_side/width
+	#new_height = int(ratio * height)
+	#new_width = int(img_min_side)
+	ratio_h = img_min_side/height
+	#new_width = int(ratio * width)
+	#new_height = int(img_min_side)
+    
+	#img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+	img = cv2.resize(img, (320, 320), interpolation=cv2.INTER_CUBIC)
+    
+	return img, ratio_w, ratio_h	
 
 def format_img_channels(img, C):
 	""" formats the image channels based on config """
@@ -112,18 +116,18 @@ def format_img_channels(img, C):
 
 def format_img(img, C):
 	""" formats an image for model prediction based on config """
-	img, ratio = format_img_size(img, C)
+	img, ratio_w, ratio_h = format_img_size(img, C)
 	img = format_img_channels(img, C)
-	return img, ratio
+	return img, ratio_w, ratio_h
 
 
 # Method to transform the coordinates of the bounding box to its original size
-def get_real_coordinates(ratio, x1, y1, x2, y2):
+def get_real_coordinates(ratio_w, ratio_h, x1, y1, x2, y2):
 
-	real_x1 = int(round(x1 // ratio))
-	real_y1 = int(round(y1 // ratio))
-	real_x2 = int(round(x2 // ratio))
-	real_y2 = int(round(y2 // ratio))
+	real_x1 = int(round(x1 // ratio_w))
+	real_y1 = int(round(y1 // ratio_h))
+	real_x2 = int(round(x2 // ratio_w))
+	real_y2 = int(round(y2 // ratio_h))
 
 	return (real_x1, real_y1, real_x2 ,real_y2)
 
@@ -141,6 +145,8 @@ if C.network == 'resnet50':
 	num_features = 1024
 elif C.network =="mobilenetv2":
 	num_features = 320
+elif C.network =="thundernetv1":
+	num_features = 256
 else:
 	# may need to fix this up with your backbone..!
 	print("backbone is not resnet50. number of features chosen is 512")
@@ -186,7 +192,7 @@ all_imgs = []
 
 classes = {}
 
-bbox_threshold = 0.7
+bbox_threshold = 0.8
 
 visualise = True
 
@@ -202,7 +208,7 @@ for idx, img_name in enumerate(sorted(os.listdir(img_path))):
 	img = cv2.imread(filepath)
 
     # preprocess image
-	X, ratio = format_img(img, C)
+	X, ratio_w, ratio_h = format_img(img, C)
 	img_scaled = (np.transpose(X[0,:,:,:],(1,2,0)) + 127.5).astype('uint8')
 	if K.image_dim_ordering() == 'tf':
 		X = np.transpose(X, (0, 2, 3, 1))
@@ -269,19 +275,19 @@ for idx, img_name in enumerate(sorted(os.listdir(img_path))):
 		new_boxes, new_probs = roi_helpers.non_max_suppression_fast(bbox, np.array(probs[key]), overlap_thresh = 0.3)
 		for jk in range(new_boxes.shape[0]):
 			(x1, y1, x2, y2) = new_boxes[jk,:]
-			(real_x1, real_y1, real_x2, real_y2) = get_real_coordinates(ratio, x1, y1, x2, y2)
+			(real_x1, real_y1, real_x2, real_y2) = get_real_coordinates(ratio_w, ratio_h, x1, y1, x2, y2)
 
 			cv2.rectangle(img,(real_x1, real_y1), (real_x2, real_y2), (int(class_to_color[key][0]), int(class_to_color[key][1]), int(class_to_color[key][2])),2)
 
 			textLabel = '{}: {}'.format(key,int(100*new_probs[jk]))
 			all_dets.append((key,100*new_probs[jk]))
-
-			(retval,baseLine) = cv2.getTextSize(textLabel,cv2.FONT_HERSHEY_COMPLEX,1,1)
+			font_scale=0.5
+			(retval,baseLine) = cv2.getTextSize(textLabel,cv2.FONT_HERSHEY_COMPLEX,font_scale,1)
 			textOrg = (real_x1, real_y1-0)
 
 			cv2.rectangle(img, (textOrg[0] - 5, textOrg[1]+baseLine - 5), (textOrg[0]+retval[0] + 5, textOrg[1]-retval[1] - 5), (0, 0, 0), 2)
 			cv2.rectangle(img, (textOrg[0] - 5,textOrg[1]+baseLine - 5), (textOrg[0]+retval[0] + 5, textOrg[1]-retval[1] - 5), (255, 255, 255), -1)
-			cv2.putText(img, textLabel, textOrg, cv2.FONT_HERSHEY_DUPLEX, 1, (0, 0, 0), 1)
+			cv2.putText(img, textLabel, textOrg, cv2.FONT_HERSHEY_DUPLEX, font_scale, (0, 0, 0), 1)
 
 	print('Full inference = {}'.format(time.time() - st))
 	print(all_dets)

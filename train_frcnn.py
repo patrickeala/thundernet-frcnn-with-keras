@@ -103,6 +103,9 @@ elif options.network == 'densenet':
 elif options.network == 'thundernetv1':
     from keras_frcnn import thundernetv1 as nn
     C.network = 'thundernetv1'
+elif options.network == 'thundernetv2':
+    from keras_frcnn import thundernetv2 as nn
+    C.network = 'thundernetv2'
 else:
     print('Not a valid model')
     raise ValueError
@@ -138,15 +141,15 @@ random.shuffle(all_imgs)
 
 num_imgs = len(all_imgs)
 
-train_imgs = [s for s in all_imgs if s['imageset'] == 'trainval']
-val_imgs = [s for s in all_imgs if s['imageset'] == 'test']
+#train_imgs = [s for s in all_imgs if s['imageset'] == 'trainval']
+#val_imgs = [s for s in all_imgs if s['imageset'] == 'test']
+train_imgs = all_imgs
 
 print('Num train samples {}'.format(len(train_imgs)))
-print('Num val samples {}'.format(len(val_imgs)))
-
+#print('Num val samples {}'.format(len(val_imgs)))
 
 data_gen_train = data_generators.get_anchor_gt(train_imgs, classes_count, C, nn.get_img_output_length, K.image_dim_ordering(), mode='train')
-data_gen_val = data_generators.get_anchor_gt(val_imgs, classes_count, C, nn.get_img_output_length,K.image_dim_ordering(), mode='val')
+#data_gen_val = data_generators.get_anchor_gt(val_imgs, classes_count, C, nn.get_img_output_length,K.image_dim_ordering(), mode='val')
 
 if K.image_dim_ordering() == 'th':
     input_shape_img = (3, None, None)
@@ -227,19 +230,22 @@ elif options.rpn_weight_path is not None:
     
     # Create the record.csv file to record losses, acc and mAP
     record_df = pd.DataFrame(
-        columns=['mean_overlapping_bboxes', 'class_acc', 'val_class_acc', 'loss_rpn_cls', 'loss_rpn_regr', 'val_loss_rpn_cls', 'val_loss_rpn_regr', 'loss_class_cls', 'loss_class_regr', 'val_loss_class_cls', 'val_loss_class_regr', 'curr_loss', 'val_curr_loss', 'elapsed_time', 'mAP'])
+        columns=['mean_overlapping_bboxes', 'class_acc', 'loss_rpn_cls', 'loss_rpn_regr', 'loss_class_cls',
+                 'loss_class_regr', 'curr_loss', 'elapsed_time', 'mAP'])
 else:
     print("First time training w/o pretrained RPN.")
     # Create the record.csv file to record losses, acc and mAP
     record_df = pd.DataFrame(
-        columns=['mean_overlapping_bboxes', 'class_acc', 'val_class_acc', 'loss_rpn_cls', 'loss_rpn_regr', 'val_loss_rpn_cls', 'val_loss_rpn_regr', 'loss_class_cls', 'loss_class_regr', 'val_loss_class_cls', 'val_loss_class_regr', 'curr_loss', 'val_curr_loss', 'elapsed_time', 'mAP'])
+        columns=['mean_overlapping_bboxes', 'class_acc', 'loss_rpn_cls', 'loss_rpn_regr', 'loss_class_cls',
+                 'loss_class_regr', 'curr_loss', 'elapsed_time', 'mAP'])
 
 # compile the model AFTER loading weights!
 model_rpn.compile(optimizer=optimizer, loss=[losses.rpn_loss_cls(num_anchors), losses.rpn_loss_regr(num_anchors)])
 model_classifier.compile(optimizer=optimizer_classifier, loss=[losses.class_loss_cls, losses.class_loss_regr(len(classes_count)-1)], metrics={'dense_class_{}'.format(len(classes_count)): 'accuracy'})
 model_all.compile(optimizer='sgd', loss='mae')
 
-epoch_length = int(options.epoch_length)
+#epoch_length = int(options.epoch_length)
+epoch_length = len(train_imgs)
 num_epochs = int(options.num_epochs)
 iter_num = 0
 
@@ -257,12 +263,6 @@ losses = np.zeros((epoch_length, 5))
 rpn_accuracy_rpn_monitor = []
 rpn_accuracy_for_epoch = []
 start_time = time.time()
-
-# Validation #########################
-val_losses = np.zeros((epoch_length, 5))
-val_rpn_accuracy_rpn_monitor = []
-val_rpn_accuracy_for_epoch = []
-######################################
 
 best_loss = np.Inf
 
@@ -286,24 +286,15 @@ for epoch_num in range(num_epochs):
 			if len(rpn_accuracy_rpn_monitor) == epoch_length and C.verbose:
 			    mean_overlapping_bboxes = float(sum(rpn_accuracy_rpn_monitor))/len(rpn_accuracy_rpn_monitor)
 			    rpn_accuracy_rpn_monitor = []
-			    val_rpn_accuracy_rpn_monitor = []
 			    print('Average number of overlapping bounding boxes from RPN = {} for {} previous iterations'.format(mean_overlapping_bboxes, epoch_length))
 			    if mean_overlapping_bboxes == 0:
 			      print('RPN is not producing bounding boxes that overlap the ground truth boxes. Check RPN settings or keep training.')
-			
-			####################################
-			# TRAINING 
-			####################################
-			
 			X, Y, img_data = next(data_gen_train)
 
 			loss_rpn = model_rpn.train_on_batch(X, Y)
 
 			P_rpn = model_rpn.predict_on_batch(X)
-			
-			overlap_thresh = 0.7
-			
-			R = roi_helpers.rpn_to_roi(P_rpn[0], P_rpn[1], C, K.image_dim_ordering(), use_regr=True, overlap_thresh=overlap_thresh, max_boxes=300)
+			R = roi_helpers.rpn_to_roi(P_rpn[0], P_rpn[1], C, K.image_dim_ordering(), use_regr=True, overlap_thresh=0.5, max_boxes=300)
 			# note: calc_iou converts from (x1,y1,x2,y2) to (x,y,w,h) format
 			X2, Y1, Y2, IouS = roi_helpers.calc_iou(R, img_data, C, class_mapping)
 
@@ -356,95 +347,22 @@ for epoch_num in range(num_epochs):
 			losses[iter_num, 3] = loss_class[2]
 			losses[iter_num, 4] = loss_class[3]
 
-			#iter_num += 1 #progbar moved to after validation
-			
-			####################################
-			# VALIDATION
-			####################################
-			
-			X, Y, img_data = next(data_gen_val)
-
-			val_loss_rpn = model_rpn.test_on_batch(X, Y)
-
-			P_rpn = model_rpn.predict_on_batch(X)
-			R = roi_helpers.rpn_to_roi(P_rpn[0], P_rpn[1], C, K.image_dim_ordering(), use_regr=True, overlap_thresh=overlap_thresh, max_boxes=300)
-			# note: calc_iou converts from (x1,y1,x2,y2) to (x,y,w,h) format
-			X2, Y1, Y2, IouS = roi_helpers.calc_iou(R, img_data, C, class_mapping)
-
-			if X2 is None:
-			    val_rpn_accuracy_rpn_monitor.append(0)
-			    val_rpn_accuracy_for_epoch.append(0)
-			    continue
-
-			neg_samples = np.where(Y1[0, :, -1] == 1)
-			pos_samples = np.where(Y1[0, :, -1] == 0)
-
-			if len(neg_samples) > 0:
-			    neg_samples = neg_samples[0]
-			else:
-			    neg_samples = []
-
-			if len(pos_samples) > 0:
-			    pos_samples = pos_samples[0]
-			else:
-			    pos_samples = []
-			
-			val_rpn_accuracy_rpn_monitor.append(len(pos_samples))
-			val_rpn_accuracy_for_epoch.append((len(pos_samples)))
-
-			if C.num_rois > 1:
-			    if len(pos_samples) < C.num_rois//2:
-                                selected_pos_samples = pos_samples.tolist()
-			    else:
-                                selected_pos_samples = np.random.choice(pos_samples, C.num_rois//2, replace=False).tolist()
-			    try:
-                                selected_neg_samples = np.random.choice(neg_samples, C.num_rois - len(selected_pos_samples), replace=False).tolist()
-			    except:
-                                selected_neg_samples = np.random.choice(neg_samples, C.num_rois - len(selected_pos_samples), replace=True).tolist()
-			    sel_samples = selected_pos_samples + selected_neg_samples
-			else:
-			    # in the extreme case where num_rois = 1, we pick a random pos or neg sample
-			    selected_pos_samples = pos_samples.tolist()
-			    selected_neg_samples = neg_samples.tolist()
-			    if np.random.randint(0, 2):
-                                sel_samples = random.choice(neg_samples)
-			    else:
-                                sel_samples = random.choice(pos_samples)
-
-			val_loss_class = model_classifier.test_on_batch([X, X2[:, sel_samples, :]], [Y1[:, sel_samples, :], Y2[:, sel_samples, :]])
-
-			val_losses[iter_num, 0] = val_loss_rpn[1]
-			val_losses[iter_num, 1] = val_loss_rpn[2]
-
-			val_losses[iter_num, 2] = val_loss_class[1]
-			val_losses[iter_num, 3] = val_loss_class[2]
-			val_losses[iter_num, 4] = val_loss_class[3]
-			
 			iter_num += 1
-			
+
 			progbar.update(iter_num, [('rpn_cls', np.mean(losses[:iter_num, 0])), ('rpn_regr', np.mean(losses[:iter_num, 1])),
 									  ('detector_cls', np.mean(losses[:iter_num, 2])), ('detector_regr', np.mean(losses[:iter_num, 3])),
                                      ("average number of objects", len(selected_pos_samples))])
-			
+
 			if iter_num == epoch_length:
 				loss_rpn_cls = np.mean(losses[:, 0])
 				loss_rpn_regr = np.mean(losses[:, 1])
 				loss_class_cls = np.mean(losses[:, 2])
 				loss_class_regr = np.mean(losses[:, 3])
 				class_acc = np.mean(losses[:, 4])
-				
-				val_loss_rpn_cls = np.mean(val_losses[:, 0])
-				val_loss_rpn_regr = np.mean(val_losses[:, 1])
-				val_loss_class_cls = np.mean(val_losses[:, 2])
-				val_loss_class_regr = np.mean(val_losses[:, 3])
-				val_class_acc = np.mean(val_losses[:, 4])
 
 				mean_overlapping_bboxes = float(sum(rpn_accuracy_for_epoch)) / len(rpn_accuracy_for_epoch)
-				val_mean_overlapping_bboxes = float(sum(val_rpn_accuracy_for_epoch)) / len(val_rpn_accuracy_for_epoch)
-				
 				rpn_accuracy_for_epoch = []
-				val_rpn_accuracy_for_epoch = []
-				
+
 				if C.verbose:
 					print('Mean number of bounding boxes from RPN overlapping ground truth boxes: {}'.format(mean_overlapping_bboxes))
 					print('Classifier accuracy for bounding boxes from RPN: {}'.format(class_acc))
@@ -453,17 +371,8 @@ for epoch_num in range(num_epochs):
 					print('Loss Detector classifier: {}'.format(loss_class_cls))
 					print('Loss Detector regression: {}'.format(loss_class_regr))
 					print('Elapsed time: {}'.format(time.time() - start_time))
-					
-					print('Val_Mean number of bounding boxes from RPN overlapping ground truth boxes: {}'.format(val_mean_overlapping_bboxes))
-					print('Val_Classifier accuracy for bounding boxes from RPN: {}'.format(val_class_acc))
-					print('Val_Loss RPN classifier: {}'.format(val_loss_rpn_cls))
-					print('Val_Loss RPN regression: {}'.format(val_loss_rpn_regr))
-					print('Val_Loss Detector classifier: {}'.format(val_loss_class_cls))
-					print('Val_Loss Detector regression: {}'.format(val_loss_class_regr))
-					
 				elapsed_time = (time.time() - start_time) / 60
 				curr_loss = loss_rpn_cls + loss_rpn_regr + loss_class_cls + loss_class_regr
-				val_curr_loss = val_loss_rpn_cls + val_loss_rpn_regr + val_loss_class_cls + val_loss_class_regr
 				iter_num = 0
 				start_time = time.time()
 
@@ -475,17 +384,11 @@ for epoch_num in range(num_epochs):
                     
 				new_row = {'mean_overlapping_bboxes': round(mean_overlapping_bboxes, 3),
                            'class_acc': round(class_acc, 3),
-                           'val_class_acc': round(val_class_acc, 3),
                            'loss_rpn_cls': round(loss_rpn_cls, 3),
                            'loss_rpn_regr': round(loss_rpn_regr, 3),
-                           'val_loss_rpn_cls': round(val_loss_rpn_cls, 3),
-                           'val_loss_rpn_regr': round(val_loss_rpn_regr, 3),
                            'loss_class_cls': round(loss_class_cls, 3),
                            'loss_class_regr': round(loss_class_regr, 3),
-                           'val_loss_class_cls': round(val_loss_class_cls, 3),
-                           'val_loss_class_regr': round(val_loss_class_regr, 3),
                            'curr_loss': round(curr_loss, 3),
-                           'val_curr_loss': round(val_curr_loss, 3),
                            'elapsed_time': round(elapsed_time, 3),
                            'mAP': 0}
 

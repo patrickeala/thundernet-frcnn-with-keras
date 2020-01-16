@@ -19,7 +19,59 @@ from keras.layers import GlobalAveragePooling2D, GlobalMaxPooling2D, TimeDistrib
 from keras import backend as K
 from keras_frcnn.RoiPoolingConv import RoiPoolingConv, PSRoiAlignPooling
 from keras_frcnn.FixedBatchNormalization import FixedBatchNormalization
+import tensorflow as tf
 
+def context_enhancement_module(x1, x2, x3, size=20, name="cem_block"):
+    
+    #C4 output subjected to pointwise conv2d
+    x1 = layers.Conv2D(256, (1,1),
+                      activation='relu',
+                      padding='same',
+                      strides=1,
+                      use_bias=True,
+                      name='{}/c4_lat'.format(name))(x1)
+    #print("x1:", x1.shape)
+    #C5 output resized to [size, size] and passed through pointwise conv2d
+    x2 = layers.Lambda(lambda img: tf.image.resize_bilinear(img, [size, size],
+                                                        align_corners=True,
+                                                        name='{}/c5_resize'.format(name)))(x2)
+    
+    x2 = layers.Conv2D(256, (1,1),
+                      activation='relu',
+                      padding='same',
+                      strides=1,
+                      use_bias=True,
+                      name='{}/c5_lat'.format(name))(x2)
+    #print("x2:", x2.shape)
+    #C_glb is broadcasted (added to zeros of [size, size, in_channels])
+    #result is then passed through pw_conv2d
+    zero = K.zeros((1, size, size, 512))
+    x3 = layers.Lambda(lambda img: layers.add([img, zero]))(x3)
+    
+    x3 = layers.Conv2D(256, (1,1),
+                      activation='relu',
+                      padding='same',
+                      strides=1,
+                      use_bias=True,
+                      name='{}/c_glb_lat'.format(name))(x3)
+    #print("x3:", x3.shape)
+    return layers.add([x1, x2, x3])
+
+def spatial_attention_module(base_layers):
+    channel_axis = 3
+    #Spatial Attention Module (SAM)
+    x = layers.Conv2D(256, (1,1),
+                      activation='relu',
+                      padding='same',
+                      strides=1,
+                      use_bias=True,
+                      name='sam/conv1x1')(base_layers)
+    x = layers.BatchNormalization(axis=channel_axis, name="sam/bn")(x)
+    x = layers.Lambda(K.sigmoid)(x)
+    x = layers.multiply([x, base_layers])
+    
+    return x
+    
 def get_weight_path():
     
     if K.image_dim_ordering() == 'th':
@@ -65,23 +117,23 @@ def nn_base(input_tensor=None, trainable=False):
     x = layers.ZeroPadding2D((3, 3))(img_input)
     
     #Input: 320x320
-    #Block 1, Output = 160x160
+    #Output = 160x160
     x = _conv_block(img_input, 32, alpha, strides=(2, 2))
     
-    #Block 2, Output 160x160 (Stride 1)
+    #Output 160x160 (Stride 1)
     x = _depthwise_conv_block(x, 64, alpha, depth_multiplier, block_id=1)
     
-    #Block 3, Output = 80x80
+    #Output = 80x80
     x = _depthwise_conv_block(x, 128, alpha, depth_multiplier,
                               strides=(2, 2), block_id=2)
     x = _depthwise_conv_block(x, 128, alpha, depth_multiplier, block_id=3)
     
-    #Block 4, Output = 40x40
+    #Output = 40x40
     x = _depthwise_conv_block(x, 256, alpha, depth_multiplier,
                               strides=(2, 2), block_id=4)
     x = _depthwise_conv_block(x, 256, alpha, depth_multiplier, block_id=5)
-
-    #Block 5 is a 5x stride1 dw-separable, Output = 20x20
+    
+    #5x stride1 dw-separable, Output = 20x20
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier,
                               strides=(2, 2), block_id=6)
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=7)
@@ -89,7 +141,23 @@ def nn_base(input_tensor=None, trainable=False):
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=9)
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=10)
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=11)
-
+    c4 = x
+    
+    #Output = 10x10
+    x = _depthwise_conv_block(x, 512, alpha, depth_multiplier,
+                              strides=(2, 2), block_id=999)
+    c5 = x
+    
+    #Obtain c_glb
+    x = GlobalAveragePooling2D(name="features/final_pool")(x)
+    c_glb = x
+    
+    #CEM
+    x = context_enhancement_module(x1=c4,
+                                   x2=c5,
+                                   x3=c_glb,
+                                   size=20)
+    
     return x
 
 def rpn(base_layers, num_anchors):
@@ -120,15 +188,17 @@ def classifier(base_layers, input_rois, num_rois, nb_classes = 21, trainable=Fal
 
     if K.backend() == 'tensorflow':
         pooling_regions = 7
-        alpha=5
+        #alpha=5
         input_shape = (num_rois,7,7,512)
     elif K.backend() == 'theano':
         pooling_regions = 7
-        alpha=5
+        #alpha=5
         input_shape = (num_rois,512,7,7)
-
-    out_roi_pool = RoiPoolingConv(pooling_regions, num_rois)([base_layers, input_rois])
-    #out_roi_pool = PSRoiAlignPooling(pooling_regions, num_rois, alpha)([base_layers, input_rois])
+        
+    x_sam = spatial_attention_module(base_layers)
+    
+    out_roi_pool = RoiPoolingConv(pooling_regions, num_rois)([x_sam, input_rois])
+    #out_roi_pool = PSRoiAlignPooling(pooling_regions, num_rois, alpha)([x_sam, input_rois])
     
     # Flatten conv layer and connect to 2 FC 2 Dropout
     out = TimeDistributed(Flatten())(out_roi_pool)

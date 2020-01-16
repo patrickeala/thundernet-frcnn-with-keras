@@ -47,8 +47,8 @@ def get_new_img_size(width, height, img_min_side=600):
 		resized_width = int(f * width)
 		resized_height = img_min_side
 
-	return resized_width, resized_height
-
+	#return resized_width, resized_height
+	return img_min_side, img_min_side
 
 class SampleSelector:
 	def __init__(self, class_count):
